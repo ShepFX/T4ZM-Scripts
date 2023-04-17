@@ -33,7 +33,7 @@ messageRepeat( message )
     while( true )
     {
         iPrintLn( message );
-        wait ( 600 );
+        level waittill( "between_round_over");
     }
 }
 
