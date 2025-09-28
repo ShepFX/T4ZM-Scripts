@@ -18,34 +18,6 @@ This GSC (Game Scripting Language) script module is designed to track, load, sav
 
 -----
 
-## 🛠️ Setup and Integration
-
-### Prerequisites
-
-This script requires a GSC environment (e.g., a custom Call of Duty mod) that supports file system access and common global functions like `getDvar`, `getplayers`, `iprintln`, `level thread`, and `level waittill`.
-
-### Integration Steps
-
-1.  **Save the Script:** Save the provided code as a GSC file (e.g., `highrounds.gsc`) in your project's script directory.
-
-2.  **Call Initialization:** Ensure your main map script calls the `main()` function of this module. This is typically done in your map's main initialization function:
-
-    ```gsc
-    // Example in your main map script (e.g., zm_mapname.gsc)
-    #include scripts\zm\_zm_utility; // Include any necessary utility headers
-    #using scripts\highrounds;      // Assuming the file is highrounds.gsc
-
-    main()
-    {
-        // ... other initialization ...
-        level thread highrounds::main(); 
-        // ...
-    }
-    ```
-
-3.  **File Directory:** Make sure the **`scriptdata/`** directory exists on your server to allow the script to save the `highrounds.txt` file.
-
------
 
 ## 🗃️ Data and File Structure
 
