@@ -1,108 +1,81 @@
 
 
-🌟 Features
-Persistent Records: High-round records are loaded from and saved to a file (scriptdata/highrounds.txt), ensuring they persist across server restarts.
+-----
 
-Per-Map & Per-Player Count Tracking: Records are tracked separately for each map and for player counts of 1, 2, 3, and 4.
+# High-Rounds Tracker Script (GSC)
 
-Automatic Record Monitoring: The script constantly monitors for a new high round at the end of each round.
+This GSC (Game Scripting Language) script module is designed to track, load, save, and announce high-round records for different player counts across various maps in a round-based survival/Zombies environment.
 
-In-Game Announcements:
+## 🌟 Features
 
-Announces all current high-round records on map load.
+  * **Persistent Records:** High-round records are loaded from and saved to a file (`scriptdata/highrounds.txt`), ensuring they persist across server restarts.
+  * **Per-Map & Per-Player Count Tracking:** Records are tracked separately for each map and for player counts of 1, 2, 3, and 4.
+  * **Automatic Record Monitoring:** The script starts a monitor thread (`MonitorForNewHighRounds`) that listens for the `"between_round_over"` notify to check if the current round beats a standing record.
+  * **In-Game Announcements:**
+      * Announces all current map records on map load.
+      * Announces records to players as they connect (`AnnounceRecordsOnJoin`).
+      * Broadcasts a celebratory message when a new high-round is broken.
 
-Announces current high-round records to players as they connect to the game.
+-----
 
-Broadcasts a celebratory message when a new high-round record is broken.
+## 🛠️ Setup and Integration
 
-Announces the current high-round record at the beginning of rounds that don't break a record.
+### Prerequisites
 
-Robust File Handling: Includes logic for reading and writing to the high-rounds file, handling data serialization (using | and ; delimiters), and gracefully initializing data for new maps.
+This script requires a GSC environment (e.g., a custom Call of Duty mod) that supports file system access and common global functions like `getDvar`, `getplayers`, `iprintln`, `level thread`, and `level waittill`.
 
-🛠️ Setup and Installation
-Prerequisites
-This script requires a GSC environment (e.g., a custom Call of Duty mod) that supports the following global and file system functions:
+### Integration Steps
 
-level thread <function>: To start functions on the level entity.
+1.  **Save the Script:** Save the provided code as a GSC file (e.g., `highrounds.gsc`) in your project's script directory.
 
-level waittill("<notify>"): To wait for specific notifications.
+2.  **Call Initialization:** Ensure your main map script calls the `main()` function of this module. This is typically done in your map's main initialization function:
 
-getDvar("mapname"): To retrieve the current map name.
+    ```gsc
+    // Example in your main map script (e.g., zm_mapname.gsc)
+    #include scripts\zm\_zm_utility; // Include any necessary utility headers
+    #using scripts\highrounds;      // Assuming the file is highrounds.gsc
 
-getplayers(): To get an array of all active players.
+    main()
+    {
+        // ... other initialization ...
+        level thread highrounds::main(); 
+        // ...
+    }
+    ```
 
-self endon("disconnect"): To stop a thread when the player disconnects.
+3.  **File Directory:** Make sure the **`scriptdata/`** directory exists on your server to allow the script to save the `highrounds.txt` file.
 
-wait <seconds>: To pause execution.
+-----
 
-iprintln / BroadcastIprintln: To send in-game messages.
+## 🗃️ Data and File Structure
 
-File system functions: fs_fopen, fs_length, fs_read, fs_fclose, fs_writeline.
+### In-Game Data (`level.highRoundsByMap`)
 
-Data manipulation functions: isDefined, int(), spawnStruct, getArrayKeys.
+Records are stored in a nested structure on the `level` entity.
 
-Integration Steps
-Place the Script: Save the provided code as a GSC file (e.g., highrounds.gsc) in your project's script directory.
+| Structure Key | Description |
+| :--- | :--- |
+| `mapname` (string) | The key for the outer array (e.g., "zm\_mapname"). |
+| `playerCount` (1-4) | The index for the inner array (e.g., `level.highRoundsByMap[mapname][2]` for 2-Player). |
+| `.round` (integer) | The high round number achieved. |
+| `.players` (array) | An array of player names (strings) who achieved the record. |
 
-Call the Initialization: Ensure your main map script calls the main() function of this module. This is typically done in the map's main function:
+### Persistent File Format (`scriptdata/highrounds.txt`)
 
-Code snippet
+The script reads and writes records in a simple, pipe-delimited format, with each record on a new line:
 
-// In your main map script (e.g., mapname.gsc)
-main() {
-    // ... other initialization ...
-    level thread highrounds::main(); // Assuming your file is named highrounds.gsc
-    // ...
-}
-File System: Create the necessary directory for the records file if it doesn't exist: scriptdata/. The script will attempt to create the highrounds.txt file automatically when saving.
+**Format:**
+`[mapname]|[playerCount]|[playerNames]|[round]`
 
-🗃️ Data Structure
-In-Game Data (level.highRoundsByMap)
-The high-round records are stored in a nested array/struct on the level entity:
+**Example Line:**
 
-level.highRoundsByMap = 
-{
-    // Key is the map name (e.g., "zm_mapname")
-    "mapname_a": 
-    [ 
-        // Index is the player count (1 to 4)
-        1: { 
-            round: <integer>,       // The high round number
-            players: <array>        // Array of player names (strings)
-        },
-        2: { ... },
-        3: { ... },
-        4: { ... }
-    ],
-    "mapname_b": { ... }
-}
-File Format (scriptdata/highrounds.txt)
-The file stores each record on a separate line using the pipe (|) and semicolon (;) delimiters.
+```
+zm_my_map|2|PlayerOne;PlayerTwo|85
+```
 
-Format:
-[mapname]|[playerCount]|[playerNames]|[round]
+  * Player names are separated by a **semicolon (`;`)**.
+  * If no players are recorded (e.g., round 0), the player name field will be the string **`None`**.
 
-Example:
-
-zm_mapname_a|1|PlayerA|60
-zm_mapname_a|2|PlayerA;PlayerB|85
-zm_mapname_b|4|PlayerX;PlayerY;PlayerZ;PlayerW|100
-zm_mapname_c|1|None|0 
-Player names are joined by a semicolon (;).
-
-If no player names are available or the record is 0, the player name field is set to None.
-
-The playerCount must be an integer from 1 to 4.
-
-⚙️ Core Functions
-Function	Purpose
-main()	The entry point for the module. Starts the InitHighRoundVars thread.
-InitHighRoundVars()	Initializes file path, data structure, loads records, initializes current map data, and starts the persistent monitoring threads (AnnounceAllCurrentRecords, MonitorForNewHighRounds, MonitorPlayerConnections).
-MonitorForNewHighRounds()	Waits for the "between_round_over" notify. Checks if the current round beats the high round for the current player count. If so, it updates the record, announces it, and saves the file.
-LoadHighRoundsFromFile()	Reads and parses the highrounds.txt file, populating level.highRoundsByMap.
-SaveHighRoundsToFile()	Serializes all data in level.highRoundsByMap and writes it back to highrounds.txt.
-AnnounceRecordsOnJoin()	Called when a player connects. Waits 10 seconds and then prints all 1-to-4 player high rounds for the current map to the joining player.
-StrSplit(input, delimiter)	Custom function to split a string by a given delimiter.
 
 Thanks To - Aymoss + HGM
 
