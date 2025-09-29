@@ -3,276 +3,278 @@
 #include maps\_zombiemode_utility;
 #include maps\_loadout;
 
+/**
+ * Main initialization function for the Round Lock script.
+ */
 init()
 {
-    // Config
-    level.min_lock_round = 20;
+    // --- Configuration ---
+    level.min_lock_round = 2; // The first round where locking becomes available.
 
-    // State
-    level.locked = false;
-    level.pin = "";
-    level.lock_initialized = false;
+    // --- State Variables ---
+    level.locked = false;             // Is the server currently locked?
+    level.pin = "";                   // The current 4-digit password.
+    level.lock_initialized = false;   // Has the lock system been activated at least once?
 
-    // Ensure server starts unlocked
-    setDvar( "password", "" );
-    setDvar( "g_password", "" );
+    // Ensure the server starts without a password.
+    setDvar("password", "");
+    setDvar("g_password", "");
 
-    // Threads
-    level thread onPlayerConnect();
-    level thread roundMonitor();
-
-    // Level-scope chat listeners (WaW signature: text, player)
-    level thread listenForChatCommands();
-    level thread listenForTeamChatCommands();
-
-    // Clear password at end of game
-    level thread resetPasswordOnEnd();
+    // --- Start Core Processes ---
+    level thread MonitorRoundChanges();      // Manages auto-locking and round-based announcements.
+    level thread ListenForChatCommands();    // Handles chat commands like .lock and .unlock.
+    level thread ResetPasswordOnEnd();       // Cleans up the password when the game ends.
 }
 
-onPlayerConnect()
+// =================================================================================================
+// Event Monitors
+// =================================================================================================
+
+/**
+ * Monitors round transitions to handle auto-locking and status announcements.
+ */
+MonitorRoundChanges()
 {
-    for ( ;; )
+    level endon("game_ended");
+
+    for (;;)
     {
-        level waittill( "connected", player );
+        level waittill("between_round_over");
 
-        if ( !isDefined( player ) )
-            continue;
-
-        // Register +actionslot 2 as a command, we'll require ADS to be held at press time
-        player notifyOnPlayerCommand( "toggle_lock_cmd", "+actionslot 2" );
-        player thread monitorUnlockInput();
-    }
-}
-
-// Round transitions -> announce state (kill feed)
-roundMonitor()
-{
-    level endon( "disconnect" );
-
-    for ( ;; )
-    {
-        level waittill( "between_round_over" );
-
-        // First time we reach threshold -> auto-lock (silent action line)
-        if ( isRoundLockActive() && !level.lock_initialized )
+        // First time the threshold is reached, silently auto-lock the server.
+        if (IsLockingAvailable() && !level.lock_initialized)
         {
             level.lock_initialized = true;
             level.locked = true;
-            level.pin = generatePin();
-            setDvar( "g_password", level.pin );
-            setDvar( "password", level.pin );
+            level.pin = GeneratePin();
+            setDvar("g_password", level.pin);
+            setDvar("password", level.pin);
         }
 
-        if ( !level.lock_initialized )
+        // Only announce after the system has been initialized.
+        if (!level.lock_initialized)
             continue;
 
-        if ( level.locked )
+        if (level.locked)
         {
-            if ( !isDefined( level.pin ) || level.pin == "" )
-                level.pin = generatePin();
-
-            setDvar( "g_password", level.pin );
-            setDvar( "password", level.pin );
-
-            announceAll( getLockedMessage() );
+            if (!isDefined(level.pin) || level.pin == "")
+                level.pin = GeneratePin();
+            
+            setDvar("g_password", level.pin);
+            setDvar("password", level.pin);
+            BroadcastIprintln(GetLockedMessage());
         }
         else
         {
-            setDvar( "g_password", "" );
-            setDvar( "password", "" );
-
-            announceAll( getUnlockedMessage() );
+            setDvar("g_password", "");
+            setDvar("password", "");
+            BroadcastIprintln(GetUnlockedMessage());
         }
     }
 }
 
-// ADS + Action Slot 2 to toggle
-monitorUnlockInput()
+/**
+ * Sets up listeners for both global and team chat messages.
+ */
+ListenForChatCommands()
 {
-    self endon( "disconnect" );
+    level endon("game_ended");
+    level thread ListenForGlobalChat();
+    level thread ListenForTeamChat();
+}
 
-    for ( ;; )
+ListenForGlobalChat()
+{
+    level endon("game_ended");
+    for(;;)
     {
-        self waittill( "toggle_lock_cmd" );
-
-        // Require ADS to be held when +actionslot 2 is pressed
-        if ( self AdsButtonPressed() )
-        {
-            setLocked( !level.locked, self );
-            wait( 0.4 ); // debounce
-        }
+        level waittill("say", text, player);
+        HandleChatCommand(text, player);
     }
 }
 
-// Global chat (WaW signature: text, player)
-listenForChatCommands()
+ListenForTeamChat()
 {
-    level endon( "disconnect" );
-
-    for ( ;; )
+    level endon("game_ended");
+    for(;;)
     {
-        level waittill( "say", text, player );
-
-        if ( !isDefined( text ) || !isDefined( player ) )
-            continue;
-
-        text = sanitizeChat( text );
-
-        if ( text == ".unlock" )
-        {
-            setLocked( false, player );
-        }
-        else if ( text == ".lock" )
-        {
-            setLocked( true, player );
-        }
+        level waittill("say_team", text, player);
+        HandleChatCommand(text, player);
     }
 }
 
-// Team chat
-listenForTeamChatCommands()
+// =================================================================================================
+// Actions
+// =================================================================================================
+
+/**
+ * Processes a chat message to execute a command.
+ * @param text The raw chat message.
+ * @param player The player who sent the message.
+ */
+HandleChatCommand(text, player)
 {
-    level endon( "disconnect" );
+    if (!isDefined(text) || !isDefined(player))
+        return;
 
-    for ( ;; )
+    command = SanitizeChat(text);
+
+    if (command == ".unlock")
     {
-        level waittill( "say_team", text, player );
-
-        if ( !isDefined( text ) || !isDefined( player ) )
-            continue;
-
-        text = sanitizeChat( text );
-
-        if ( text == ".unlock" )
-        {
-            setLocked( false, player );
-        }
-        else if ( text == ".lock" )
-        {
-            setLocked( true, player );
-        }
+        SetServerLocked(false, player);
+    }
+    else if (command == ".lock")
+    {
+        SetServerLocked(true, player);
     }
 }
 
-sanitizeChat( text )
+/**
+ * Sets the server's lock state and announces the change.
+ * @param shouldLock True to lock, false to unlock.
+ * @param triggeringPlayer The player who initiated the action (optional).
+ */
+SetServerLocked(shouldLock, triggeringPlayer)
 {
-    if ( !isDefined( text ) )
-        return "";
-
-    // Trim leading spaces, tabs, and '§' without using strlen
-    // Use a small safety cap to avoid infinite loops
-    for ( i = 0; i < 64; i++ )
+    // NEW: Provide feedback for redundant commands.
+    if (!shouldLock && !level.locked)
     {
-        if ( text == "" )
-            return "";
-
-        first = getSubStr( text, 0, 1 );
-
-        if ( first == " " || first == "§" || first == "\t" )
-        {
-            // Drop the first character; length param can be large
-            text = getSubStr( text, 1, 1024 );
-            continue;
-        }
-        break;
+        if (isDefined(triggeringPlayer))
+            triggeringPlayer iPrintLn("^3Server is already unlocked.");
+        return;
     }
-
-    return text;
-}
-
-// Set lock state and announce via kill feed.
-// actor: optional player who triggered the change.
-setLocked( shouldLock, actor )
-{
-    actorName = getActorName( actor );
-
-    // Block locking until the minimum round is reached
-    if ( shouldLock && !isRoundLockActive() )
+    if (shouldLock && level.locked)
     {
-        if ( isDefined( actor ) )
-            actor iPrintLn( "^3Locking is disabled until round ^5" + level.min_lock_round );
+        if (isDefined(triggeringPlayer))
+            triggeringPlayer iPrintLn("^3Server is already locked. Password: ^5" + level.pin);
         return;
     }
 
-    if ( shouldLock )
+    // Block locking before the minimum round.
+    if (shouldLock && !IsLockingAvailable())
+    {
+        if (isDefined(triggeringPlayer))
+            triggeringPlayer iPrintLn("^3Cannot lock until round ^5" + level.min_lock_round);
+        return;
+    }
+
+    playerName = GetTriggeringPlayerName(triggeringPlayer);
+
+    if (shouldLock)
     {
         level.lock_initialized = true;
         level.locked = true;
-        level.pin = generatePin();
+        level.pin = GeneratePin();
 
-        setDvar( "g_password", level.pin );
-        setDvar( "password", level.pin );
+        setDvar("g_password", level.pin);
+        setDvar("password", level.pin);
 
-        announceAll( actorName + " ^7locked the server. Password ^5" + level.pin );
+        BroadcastIprintln("^1Locked by ^5" + playerName + "^7. Password: ^5" + level.pin);
     }
     else
     {
         level.locked = false;
+        level.pin = "";
 
-        setDvar( "g_password", "" );
-        setDvar( "password", "" );
+        setDvar("g_password", "");
+        setDvar("password", "");
 
-        announceAll( actorName + " ^7unlocked the server." );
+        BroadcastIprintln("^2Unlocked by ^5" + playerName);
     }
 }
 
-// Helpers
-
-isRoundLockActive()
+/**
+ * Clears the server password when the game ends.
+ */
+ResetPasswordOnEnd()
 {
-    return isDefined( level.round_number ) && level.round_number >= level.min_lock_round;
+    level waittill("end_game");
+    setDvar("g_password", "");
+    setDvar("password", "");
 }
 
+// =================================================================================================
+// Helpers
+// =================================================================================================
+
+/**
+ * Checks if the current round is at or above the minimum lock round.
+ * @return True if locking is allowed, false otherwise.
+ */
+IsLockingAvailable()
+{
+    return isDefined(level.round_number) && level.round_number >= level.min_lock_round;
+}
+
+/**
+ * Gets the formatted message for when the server is locked.
+ */
 getLockedMessage()
 {
-    return "Server is now ^1LOCKED^7. Use password ^5" + level.pin + " ^7to rejoin. Unlock with ^5ADS + 2^7 or type ^5.unlock^7";
+    return "^1Server Locked^7 | Password: ^5" + level.pin + "^7 | Type ^5.unlock^7 to open";
 }
 
+/**
+ * Gets the formatted message for when the server is unlocked.
+ */
 getUnlockedMessage()
 {
-    return "Server remains ^2unlocked^7 - to lock again do ^5.lock^7 (or press ^5ADS + 2^7)";
+    return "^2Server Unlocked^7 | Type ^5.lock^7 to secure";
 }
 
-// Kill feed broadcast
-announceAll( message )
+/**
+ * Broadcasts a message to all players using iprintln.
+ * @param message The text to display.
+ */
+BroadcastIprintln(message)
 {
-    players = getPlayersSafe();
-    for ( i = 0; i < players.size; i++ )
-        players[i] iPrintLn( message );
+    players = getplayers();
+    for (i = 0; i < players.size; i++)
+        players[i] iPrintLn(message);
 }
 
-// Safe actor name
-getActorName( actor )
+/**
+ * Safely gets the name of the player who triggered an action.
+ * @param triggeringPlayer The player entity.
+ * @return The player's name or "Someone".
+ */
+GetTriggeringPlayerName(triggeringPlayer)
 {
-    if ( isDefined( actor ) && isDefined( actor.name ) )
-        return actor.name;
+    // --- UPDATED to use .playerName ---
+    if (isDefined(triggeringPlayer) && isDefined(triggeringPlayer.playerName))
+        return triggeringPlayer.playerName;
     return "Someone";
 }
 
-// 4-digit PIN
-generatePin()
+/**
+ * Generates a random 4-digit PIN as a string.
+ */
+GeneratePin()
 {
-    str = "";
-    for ( i = 0; i < 4; i++ )
-        str = str + randomInt( 10 );
-    return str;
+    pin = "";
+    for (i = 0; i < 4; i++)
+        pin += randomInt(10);
+    return pin;
 }
 
-// Safe players array getter
-getPlayersSafe()
+/**
+ * Cleans chat text by removing leading spaces and other special characters.
+ */
+SanitizeChat(text)
 {
-    if ( isDefined( level.players ) )
-        return level.players;
+    if (!isDefined(text)) return "";
 
-    return getEntArray( "player", "classname" );
-}
+    for (i = 0; i < 64; i++) // Safety cap to prevent infinite loops.
+    {
+        if (text == "") return "";
 
-// Clear password on game end
-resetPasswordOnEnd()
-{
-    level endon( "disconnect" );
-    level waittill( "end_game" );
-
-    setDvar( "g_password", "" );
-    setDvar( "password", "" );
+        firstChar = getSubStr(text, 0, 1);
+        if (firstChar == " " || firstChar == "§" || firstChar == "\t")
+        {
+            text = getSubStr(text, 1, 1024);
+            continue;
+        }
+        break;
+    }
+    return text;
 }
