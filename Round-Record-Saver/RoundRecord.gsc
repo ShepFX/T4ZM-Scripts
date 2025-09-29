@@ -1,9 +1,13 @@
-
+/**
+ * Main function to initialize the high round tracking system.
+ */
 main() {
     level thread InitHighRoundVars();
 }
 
-
+/**
+ * Initializes all necessary level variables and loads existing records.
+ */
 InitHighRoundVars() {
     level.highRoundFile = "scriptdata/highrounds.txt";
     level.highRoundsByMap = [];
@@ -14,9 +18,32 @@ InitHighRoundVars() {
     level thread AnnounceAllCurrentRecords(); 
     level thread MonitorForNewHighRounds();
     level thread MonitorPlayerConnections();
+    level thread ListenForChatCommands();
 }
 
+/**
+ * NEW: Listens for chat commands from players.
+ */
+ListenForChatCommands() {
+    level endon("game_ended");
 
+    for (;;) {
+        level waittill("say", text, player);
+
+        if (!isDefined(text) || !isDefined(player))
+            continue;
+
+        command = sanitizeChat(text);
+
+        if (command == ".record" || command == ".records") {
+            player thread ShowPlayerRecords();
+        }
+    }
+}
+
+/**
+ * Monitors for players connecting to the server.
+ */
 MonitorPlayerConnections() {
     for(;;) {
         level waittill("connected", player);
@@ -24,11 +51,22 @@ MonitorPlayerConnections() {
     }
 }
 
-
+/**
+ * Displays the current map's high rounds to a player who just joined.
+ */
 AnnounceRecordsOnJoin() {
     self endon("disconnect");
     
-    wait 10; 
+    wait 10; // Initial delay so the message doesn't get lost on screen load.
+    self thread ShowPlayerRecords();
+}
+
+/**
+ * NEW (Refactored): Displays the record information to the calling player.
+ * This is now used by both the join announcement and the .records command.
+ */
+ShowPlayerRecords() {
+    self endon("disconnect");
 
     mapname = getDvar("mapname");
     if (!isDefined(level.highRoundsByMap[mapname])) return;
@@ -54,12 +92,13 @@ AnnounceRecordsOnJoin() {
         }
         
         self iprintln(message);
-        wait 1;
+        wait 1; // Stagger messages for readability.
     }
 }
 
-
-
+/**
+ * Ensures that the data structure for the current map is initialized.
+ */
 InitializeDataForCurrentMap() {
     mapname = getDvar("mapname");
     if (!isDefined(level.highRoundsByMap[mapname])) {
@@ -72,7 +111,9 @@ InitializeDataForCurrentMap() {
     }
 }
 
-
+/**
+ * Loads all high round records from the data file into memory.
+ */
 LoadHighRoundsFromFile() {
     file = fs_fopen(level.highRoundFile, "read");
     if (isDefined(file) && file != 0) {
@@ -121,7 +162,9 @@ LoadHighRoundsFromFile() {
     }
 }
 
-
+/**
+ * Saves all high round records from memory back to the data file.
+ */
 SaveHighRoundsToFile() {
     file = fs_fopen(level.highRoundFile, "write");
     if (isDefined(file) && file != 0) {
@@ -149,7 +192,9 @@ SaveHighRoundsToFile() {
     }
 }
 
-
+/**
+ * The main game loop that checks for new high scores after each round.
+ */
 MonitorForNewHighRounds() {
     mapname = getDvar("mapname");
     while (1) {
@@ -183,7 +228,9 @@ MonitorForNewHighRounds() {
     }
 }
 
-
+/**
+ * Announces all current records for the map at the start of a game.
+ */
 AnnounceAllCurrentRecords() {
     wait 2;
     for (i = 1; i <= 4; i++) {
@@ -192,7 +239,9 @@ AnnounceAllCurrentRecords() {
     }
 }
 
-
+/**
+ * Announces the existing record for a specific player count.
+ */
 AnnounceCurrentRecord(numPlayers) {
     if (numPlayers < 1 || numPlayers > 4) return;
     
@@ -216,7 +265,9 @@ AnnounceCurrentRecord(numPlayers) {
     }
 }
 
-
+/**
+ * Announces a newly set high round to all players.
+ */
 AnnounceNewHighRound(players, round, numPlayers) {
     if (!isDefined(players)) players = [];
     if (!isDefined(round)) round = 0;
@@ -235,7 +286,9 @@ AnnounceNewHighRound(players, round, numPlayers) {
     BroadcastIprintln(message);
 }
 
-
+/**
+ * Broadcasts a message to all players using iprintln.
+ */
 BroadcastIprintln(message) {
     players = getplayers();
     for (i = 0; i < players.size; i++) {
@@ -243,7 +296,9 @@ BroadcastIprintln(message) {
     }
 }
 
-
+/**
+ * Helper function to get the player's name.
+ */
 GetPlayerName(player) {
     if (isDefined(player) && isDefined(player.playername)) {
         return player.playername;
@@ -251,12 +306,16 @@ GetPlayerName(player) {
     return "Unknown";
 }
 
-
+/**
+ * Helper function to get the game mode string (e.g., "1-player", "2-player").
+ */
 GetGameModeString(numPlayers) {
     return numPlayers + "-Player";
 }
 
-
+/**
+ * Custom string split function.
+ */
 StrSplit(input, delimiter) {
     parts = [];
     current = "";
@@ -273,4 +332,23 @@ StrSplit(input, delimiter) {
         parts[parts.size] = current;
     }
     return parts;
+}
+
+/**
+ * NEW: Cleans chat text to remove leading spaces and other characters.
+ */
+sanitizeChat(text) {
+    if (!isDefined(text)) return "";
+
+    for (i = 0; i < 64; i++) {
+        if (text == "") return "";
+
+        first = getSubStr(text, 0, 1);
+        if (first == " " || first == "§" || first == "\t") {
+            text = getSubStr(text, 1, 1024);
+            continue;
+        }
+        break;
+    }
+    return text;
 }
