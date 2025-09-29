@@ -255,7 +255,7 @@ AnnounceCurrentRecord(numPlayers) {
     if (round > 0 && isDefined(players) && players.size > 0) {
         playersString = players[0];
         for(i = 1; i < players.size; i++){
-            playersString += ", " + players[i];
+            playersString += "^7, ^5" + players[i];
         }
 
         mode = GetGameModeString(numPlayers);
