@@ -84,7 +84,7 @@ ShowPlayerRecords() {
         if (round > 0 && isDefined(recordData.players) && recordData.players.size > 0) {
             playersString = recordData.players[0];
             for(i = 1; i < recordData.players.size; i++){
-                playersString += ", " + recordData.players[i];
+                playersString += "^7, ^5" + recordData.players[i];
             }
             message = "^5" + mode + "^7: Round ^5" + round + "^7 by ^5" + playersString;
         } else {
