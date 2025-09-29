@@ -9,7 +9,7 @@
 init()
 {
     // --- Configuration ---
-    level.min_lock_round = 2; // The first round where locking becomes available.
+    level.min_lock_round = 20; // The first round where locking becomes available.
 
     // --- State Variables ---
     level.locked = false;             // Is the server currently locked?
