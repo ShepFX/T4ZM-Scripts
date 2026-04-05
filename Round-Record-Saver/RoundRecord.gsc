@@ -22,22 +22,38 @@ InitHighRoundVars() {
 }
 
 /**
- * NEW: Listens for chat commands from players.
+ * Sets up listeners for both global and team chat messages.
  */
 ListenForChatCommands() {
     level endon("game_ended");
+    level thread ListenForGlobalChat();
+    level thread ListenForTeamChat();
+}
 
+ListenForGlobalChat() {
+    level endon("game_ended");
     for (;;) {
         level waittill("say", text, player);
+        HandleRecordCommand(text, player);
+    }
+}
 
-        if (!isDefined(text) || !isDefined(player))
-            continue;
+ListenForTeamChat() {
+    level endon("game_ended");
+    for (;;) {
+        level waittill("say_team", text, player);
+        HandleRecordCommand(text, player);
+    }
+}
 
-        command = sanitizeChat(text);
+HandleRecordCommand(text, player) {
+    if (!isDefined(text) || !isDefined(player))
+        return;
 
-        if (command == ".record" || command == ".records") {
-            player thread ShowPlayerRecords();
-        }
+    command = sanitizeChat(text);
+
+    if (command == ".record" || command == ".records") {
+        player thread ShowPlayerRecords();
     }
 }
 
