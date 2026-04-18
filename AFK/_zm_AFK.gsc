@@ -5,7 +5,7 @@
 //
 // AFK System for T4 Zombies (Plutonium)
 // Usage: .afk in chat to toggle AFK mode
-// Requires: Round 20+, 2-hour cooldown between uses
+// Requires: Round 30+, 2-hour cooldown between uses
 //
 
 init()
@@ -13,13 +13,12 @@ init()
     println( "[AFK] init() called" );
 
     level.afk_system = spawnStruct();
-    level.afk_system.min_round = 20;
+    level.afk_system.min_round = 30;
     level.afk_system.cooldown_ms = 7200000;       // 2 hours
     level.afk_system.duration_s = 900;             // 15 minutes
     level.afk_system.activation_delay_s = 60;      // 1-minute anti-panic delay
     level.afk_system.round_frozen = false;
-    level.afk_system.saved_round_zombies = 0;
-    level.afk_system.saved_max_ai = 0;
+    level.afk_system.saved_use_failsafe = undefined;
     level.afk_system.spawn_points = undefined;
     level.afk_system.verified_spawn = undefined;
 
@@ -587,40 +586,32 @@ round_freeze_monitor()
 
 freeze_round()
 {
-    alive_at_freeze = getaiarray( "axis" ).size;
-
+    // Disable the 30s idle-zombie failsafe so alive zombies don't die while
+    // the player is AFK. T4 spawner caches zombie_max_ai locally and reads
+    // zombie_total linearly, so mutating those mid-round doesn't stop spawns
+    // and corrupts round_wait's exit condition. Holding zombies alive is the
+    // only reliable way to freeze progression: spawner throttles at
+    // get_enemy_count() > 31, round_wait blocks on get_enemy_count() > 0.
     level.afk_system.round_frozen = true;
-    level.afk_system.saved_round_zombies = alive_at_freeze + level.zombie_total;
-    level.afk_system.saved_max_ai = level.zombie_vars["zombie_max_ai"];
+    level.afk_system.saved_use_failsafe = level.zombie_vars["zombie_use_failsafe"];
+    level.zombie_vars["zombie_use_failsafe"] = false;
 
-    println( "[AFK] freeze: alive=" + alive_at_freeze + " queue=" + level.zombie_total + " budget=" + level.afk_system.saved_round_zombies );
-
-    // Stop spawning by setting max concurrent AI to 0
-    level.zombie_vars["zombie_max_ai"] = 0;
-
-    // Prevent round-end: ensure zombie_total > 0 so game thinks more are coming
-    if ( level.zombie_total <= 0 )
-        level.zombie_total = 1;
-
+    println( "[AFK] freeze: alive=" + getaiarray( "axis" ).size + " queue=" + level.zombie_total + " (failsafe disabled)" );
     broadcast_iprintln( "^3Round paused - all players AFK." );
 }
 
 unfreeze_round()
 {
-    alive_now = getaiarray( "axis" ).size;
-
-    // Recalculate queue: if zombies died during freeze (traps, env damage),
-    // add them back to the queue so the round doesn't skip
-    new_queue = level.afk_system.saved_round_zombies - alive_now;
-    if ( new_queue < 0 )
-        new_queue = 0;
-
-    println( "[AFK] unfreeze: alive=" + alive_now + " budget=" + level.afk_system.saved_round_zombies + " new_queue=" + new_queue );
-
     level.afk_system.round_frozen = false;
-    level.zombie_total = new_queue;
-    level.zombie_vars["zombie_max_ai"] = level.afk_system.saved_max_ai;
 
+    if ( isDefined( level.afk_system.saved_use_failsafe ) )
+        level.zombie_vars["zombie_use_failsafe"] = level.afk_system.saved_use_failsafe;
+    else
+        level.zombie_vars["zombie_use_failsafe"] = true;
+
+    level.afk_system.saved_use_failsafe = undefined;
+
+    println( "[AFK] unfreeze: alive=" + getaiarray( "axis" ).size + " queue=" + level.zombie_total + " (failsafe restored)" );
     broadcast_iprintln( "^2Round resumed." );
 }
 
