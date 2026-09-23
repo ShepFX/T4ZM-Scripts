@@ -1,39 +1,46 @@
+/**
+ * Round locker for T4 (World at War) Zombies - same rules as the BO1 and BO2
+ * servers (T5PostRoundLock / T6PostRoundLockVote):
+ *
+ *   .lock      from round 1 starts a lock vote; a majority of the players on
+ *              locks the server (a solo player locks it straight away).
+ *              Votes stay open 60 seconds, 5-minute cooldown between votes.
+ *   round 20   the server locks itself regardless.
+ *
+ * Locking sets a random 4-digit password; it clears when the game ends.
+ * Replaces the earlier T4RoundLocker, which only auto-locked at round 20 and
+ * had no chat command.
+ */
+
 #include common_scripts\utility;
 #include maps\_utility;
 #include maps\_zombiemode_utility;
 #include maps\_loadout;
 
-/**
- * Main initialization function for the Round Lock script.
- */
 init()
 {
-    // --- Configuration ---
-    level.min_lock_round = 20; // The first round where locking becomes available.
+    level.min_lock_round = 1;
+    level.force_lock_round = 20;
+    level.lock_vote_duration = 60;
+    level.lock_vote_cooldown_ms = 300000; // 5 minutes.
 
-    // --- State Variables ---
-    level.locked = false;             // Is the server currently locked?
-    level.pin = "";                   // The current 4-digit password.
-    level.lock_initialized = false;   // Has the lock system been activated at least once?
+    level.locked = false;
+    level.pin = "";
+    level.lock_vote_active = false;
+    level.lock_vote_started_at = 0;
+    level.lock_vote_voters = [];
+    level.last_lock_vote_time = 0;
 
-    // Ensure the server starts without a password.
     setDvar("password", "");
     setDvar("g_password", "");
 
-    // --- Start Core Processes ---
-    level thread MonitorRoundChanges();      // Manages auto-locking and round-based announcements.
-    level thread ListenForChatCommands();    // Handles chat commands like .lock and .unlock.
-    level thread ResetPasswordOnEnd();       // Cleans up the password when the game ends.
+    level thread MonitorForcedRoundLock();
+    level thread ListenForChatCommands();
+    level thread ResetPasswordOnEnd();
+    level thread ResetPasswordOnGameEnded();
 }
 
-// =================================================================================================
-// Event Monitors
-// =================================================================================================
-
-/**
- * Monitors round transitions to handle auto-locking and status announcements.
- */
-MonitorRoundChanges()
+MonitorForcedRoundLock()
 {
     level endon("game_ended");
 
@@ -41,41 +48,14 @@ MonitorRoundChanges()
     {
         level waittill("between_round_over");
 
-        // First time the threshold is reached, silently auto-lock the server.
-        if (IsLockingAvailable() && !level.lock_initialized)
-        {
-            level.lock_initialized = true;
-            level.locked = true;
-            level.pin = GeneratePin();
-            setDvar("g_password", level.pin);
-            setDvar("password", level.pin);
-        }
-
-        // Only announce after the system has been initialized.
-        if (!level.lock_initialized)
+        if (level.locked)
             continue;
 
-        if (level.locked)
-        {
-            if (!isDefined(level.pin) || level.pin == "")
-                level.pin = GeneratePin();
-            
-            setDvar("g_password", level.pin);
-            setDvar("password", level.pin);
-            BroadcastIprintln(GetLockedMessage());
-        }
-        else
-        {
-            setDvar("g_password", "");
-            setDvar("password", "");
-            BroadcastIprintln(GetUnlockedMessage());
-        }
+        if (IsForcedLockAvailable())
+            LockServer("round");
     }
 }
 
-/**
- * Sets up listeners for both global and team chat messages.
- */
 ListenForChatCommands()
 {
     level endon("game_ended");
@@ -86,7 +66,8 @@ ListenForChatCommands()
 ListenForGlobalChat()
 {
     level endon("game_ended");
-    for(;;)
+
+    for (;;)
     {
         level waittill("say", text, player);
         HandleChatCommand(text, player);
@@ -96,22 +77,14 @@ ListenForGlobalChat()
 ListenForTeamChat()
 {
     level endon("game_ended");
-    for(;;)
+
+    for (;;)
     {
         level waittill("say_team", text, player);
         HandleChatCommand(text, player);
     }
 }
 
-// =================================================================================================
-// Actions
-// =================================================================================================
-
-/**
- * Processes a chat message to execute a command.
- * @param text The raw chat message.
- * @param player The player who sent the message.
- */
 HandleChatCommand(text, player)
 {
     if (!isDefined(text) || !isDefined(player))
@@ -119,136 +92,189 @@ HandleChatCommand(text, player)
 
     command = SanitizeChat(text);
 
-    if (command == ".unlock")
-    {
-        SetServerLocked(false, player);
-    }
-    else if (command == ".lock")
-    {
-        SetServerLocked(true, player);
-    }
+    if (command == ".lock")
+        HandleLockVote(player);
+    else if (command == ".unlock")
+        player iPrintLn("^3Server lock clears automatically at game end.");
 }
 
-/**
- * Sets the server's lock state and announces the change.
- * @param shouldLock True to lock, false to unlock.
- * @param triggeringPlayer The player who initiated the action (optional).
- */
-SetServerLocked(shouldLock, triggeringPlayer)
+HandleLockVote(player)
 {
-    // NEW: Provide feedback for redundant commands.
-    if (!shouldLock && !level.locked)
+    if (level.locked)
     {
-        if (isDefined(triggeringPlayer))
-            triggeringPlayer iPrintLn("^3Server is already unlocked.");
-        return;
-    }
-    if (shouldLock && level.locked)
-    {
-        if (isDefined(triggeringPlayer))
-            triggeringPlayer iPrintLn("^3Server is already locked. Password: ^5" + level.pin);
+        player iPrintLn("^3Server is already locked until game end.");
         return;
     }
 
-    // Block locking before the minimum round.
-    if (shouldLock && !IsLockingAvailable())
+    if (!IsLockingAvailable())
     {
-        if (isDefined(triggeringPlayer))
-            triggeringPlayer iPrintLn("^3Cannot lock until round ^5" + level.min_lock_round);
+        player iPrintLn("^3Lock voting is available from round ^5" + level.min_lock_round);
         return;
     }
 
-    playerName = GetTriggeringPlayerName(triggeringPlayer);
-
-    if (shouldLock)
+    if (!level.lock_vote_active)
     {
-        level.lock_initialized = true;
-        level.locked = true;
-        level.pin = GeneratePin();
+        if (!CanStartLockVote())
+        {
+            remaining = GetLockVoteCooldownRemaining();
+            player iPrintLn("^3Lock vote cooldown active. Try again in ^5" + remaining + "^3 seconds.");
+            return;
+        }
 
-        setDvar("g_password", level.pin);
-        setDvar("password", level.pin);
-
-        BroadcastIprintln("^1Locked by ^5" + playerName + "^7. Password: ^5" + level.pin);
+        StartLockVote(player);
     }
-    else
-    {
-        level.locked = false;
-        level.pin = "";
 
-        setDvar("g_password", "");
-        setDvar("password", "");
-
-        BroadcastIprintln("^2Unlocked by ^5" + playerName);
-    }
+    RegisterLockVote(player);
 }
 
-/**
- * Clears the server password when the game ends.
- */
+StartLockVote(player)
+{
+    level.lock_vote_active = true;
+    level.lock_vote_started_at = getTime();
+    level.last_lock_vote_time = level.lock_vote_started_at;
+    level.lock_vote_voters = [];
+
+    BroadcastIprintln("^3Lock vote started by ^5" + GetPlayerName(player) + "^7. Type ^5.lock^7 to vote. Need ^5" + GetRequiredVoteCount() + "^7 votes.");
+    level thread LockVoteTimeout();
+}
+
+RegisterLockVote(player)
+{
+    if (HasPlayerVoted(player))
+    {
+        player iPrintLn("^3You already voted to lock.");
+        return;
+    }
+
+    level.lock_vote_voters[level.lock_vote_voters.size] = player;
+
+    votes = level.lock_vote_voters.size;
+    required = GetRequiredVoteCount();
+    BroadcastIprintln("^2Lock vote: ^5" + votes + "^7/^5" + required + "^7");
+
+    if (votes >= required)
+        LockServer("vote");
+}
+
+LockVoteTimeout()
+{
+    level endon("game_ended");
+    level endon("lock_vote_ended");
+
+    wait level.lock_vote_duration;
+
+    if (!level.lock_vote_active || level.locked)
+        return;
+
+    votes = level.lock_vote_voters.size;
+    required = GetRequiredVoteCount();
+    level.lock_vote_active = false;
+    level.lock_vote_voters = [];
+
+    BroadcastIprintln("^3Lock vote failed: ^5" + votes + "^7/^5" + required + "^7 votes.");
+}
+
+LockServer(reason)
+{
+    if (level.locked)
+        return;
+
+    level.locked = true;
+    level.pin = GeneratePin();
+    level.lock_vote_active = false;
+    level.lock_vote_voters = [];
+    level notify("lock_vote_ended");
+
+    setDvar("g_password", level.pin);
+    setDvar("password", level.pin);
+
+    if (isDefined(reason) && reason == "round")
+        BroadcastIprintln("^1Server Locked^7 | Round ^5" + level.force_lock_round + "^7 reached | Clears at game end");
+    else
+        BroadcastIprintln("^1Server Locked^7 | Vote passed | Clears at game end");
+}
+
 ResetPasswordOnEnd()
 {
+    level endon("post_round_lock_reset");
     level waittill("end_game");
-    setDvar("g_password", "");
-    setDvar("password", "");
+    UnlockServer();
+    level notify("post_round_lock_reset");
 }
 
-// =================================================================================================
-// Helpers
-// =================================================================================================
+ResetPasswordOnGameEnded()
+{
+    level endon("post_round_lock_reset");
+    level waittill("game_ended");
+    UnlockServer();
+    level notify("post_round_lock_reset");
+}
 
-/**
- * Checks if the current round is at or above the minimum lock round.
- * @return True if locking is allowed, false otherwise.
- */
+UnlockServer()
+{
+    setDvar("g_password", "");
+    setDvar("password", "");
+    level.locked = false;
+    level.pin = "";
+    level.lock_vote_active = false;
+    level.lock_vote_voters = [];
+    level notify("lock_vote_ended");
+}
+
+CanStartLockVote()
+{
+    if (level.last_lock_vote_time <= 0)
+        return true;
+
+    return (getTime() - level.last_lock_vote_time) >= level.lock_vote_cooldown_ms;
+}
+
+GetLockVoteCooldownRemaining()
+{
+    elapsed = getTime() - level.last_lock_vote_time;
+    remaining = level.lock_vote_cooldown_ms - elapsed;
+
+    if (remaining < 0)
+        remaining = 0;
+
+    return int((remaining + 999) / 1000);
+}
+
+GetRequiredVoteCount()
+{
+    players = getplayers();
+    count = players.size;
+
+    if (count < 1)
+        count = 1;
+
+    return int(count / 2) + 1;
+}
+
+HasPlayerVoted(player)
+{
+    for (i = 0; i < level.lock_vote_voters.size; i++)
+    {
+        if (!isDefined(level.lock_vote_voters[i]))
+            continue;
+
+        if (level.lock_vote_voters[i] == player)
+            return true;
+    }
+
+    return false;
+}
+
 IsLockingAvailable()
 {
     return isDefined(level.round_number) && level.round_number >= level.min_lock_round;
 }
 
-/**
- * Gets the formatted message for when the server is locked.
- */
-getLockedMessage()
+IsForcedLockAvailable()
 {
-    return "^1Server Locked^7 | Password: ^5" + level.pin + "^7 | Type ^5.unlock^7 to open";
+    return isDefined(level.round_number) && level.round_number >= level.force_lock_round;
 }
 
-/**
- * Gets the formatted message for when the server is unlocked.
- */
-getUnlockedMessage()
-{
-    return "^2Server Unlocked^7 | Type ^5.lock^7 to secure";
-}
-
-/**
- * Broadcasts a message to all players using iprintln.
- * @param message The text to display.
- */
-BroadcastIprintln(message)
-{
-    players = getplayers();
-    for (i = 0; i < players.size; i++)
-        players[i] iPrintLn(message);
-}
-
-/**
- * Safely gets the name of the player who triggered an action.
- * @param triggeringPlayer The player entity.
- * @return The player's name or "Someone".
- */
-GetTriggeringPlayerName(triggeringPlayer)
-{
-    // --- UPDATED to use .playerName ---
-    if (isDefined(triggeringPlayer) && isDefined(triggeringPlayer.playerName))
-        return triggeringPlayer.playerName;
-    return "Someone";
-}
-
-/**
- * Generates a random 4-digit PIN as a string.
- */
 GeneratePin()
 {
     pin = "";
@@ -257,24 +283,52 @@ GeneratePin()
     return pin;
 }
 
-/**
- * Cleans chat text by removing leading spaces and other special characters.
- */
+BroadcastIprintln(message)
+{
+    players = getplayers();
+
+    for (i = 0; i < players.size; i++)
+    {
+        if (!isDefined(players[i]))
+            continue;
+
+        players[i] iPrintLn(message);
+    }
+}
+
+GetPlayerName(player)
+{
+    if (!isDefined(player))
+        return "Someone";
+
+    if (isDefined(player.name))
+        return player.name;
+
+    if (isDefined(player.playerName))
+        return player.playerName;
+
+    return "Someone";
+}
+
 SanitizeChat(text)
 {
-    if (!isDefined(text)) return "";
+    if (!isDefined(text))
+        return "";
 
-    for (i = 0; i < 64; i++) // Safety cap to prevent infinite loops.
+    for (i = 0; i < 64; i++)
     {
-        if (text == "") return "";
+        if (text == "")
+            return "";
 
         firstChar = getSubStr(text, 0, 1);
-        if (firstChar == " " || firstChar == "§" || firstChar == "\t")
+        if (firstChar == " " || firstChar == "\t")
         {
             text = getSubStr(text, 1, 1024);
             continue;
         }
+
         break;
     }
+
     return text;
 }
