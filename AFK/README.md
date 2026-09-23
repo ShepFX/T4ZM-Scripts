@@ -19,7 +19,7 @@ You can adjust these variables in the `init()` function to tune the experience:
 | Variable | Default Value | Description |
 | :--- | :--- | :--- |
 | `min_round` | 20 | Minimum round required to use the command. |
-| `cooldown_ms` | 2 hours | Time required between uses per player. |
+| `cooldown_ms` | 45 minutes | Time required between uses per player. |
 | `duration_s` | 15 minutes | Maximum time a player can stay AFK before forced resume. |
 | `activation_delay_s` | 60 seconds | The "grace period" before AFK kicks in. |
 

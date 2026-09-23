@@ -5,7 +5,7 @@
 //
 // AFK System for T4 Zombies (Plutonium)
 // Usage: .afk in chat to toggle AFK mode
-// Requires: Round 30+, 2-hour cooldown between uses
+// Requires: Round 20+, 45-minute cooldown between uses
 //
 
 init()
@@ -13,8 +13,8 @@ init()
     println( "[AFK] init() called" );
 
     level.afk_system = spawnStruct();
-    level.afk_system.min_round = 30;
-    level.afk_system.cooldown_ms = 7200000;       // 2 hours
+    level.afk_system.min_round = 20;
+    level.afk_system.cooldown_ms = 2700000;   // 45 minutes
     level.afk_system.duration_s = 900;             // 15 minutes
     level.afk_system.activation_delay_s = 60;      // 1-minute anti-panic delay
     level.afk_system.round_frozen = false;
