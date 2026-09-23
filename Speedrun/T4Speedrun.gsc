@@ -144,7 +144,6 @@ SrUpdateRoster() {
             slot = level.srRoster.size;
             level.srRoster[slot] = spawnStruct();
             level.srRoster[slot].guid = guid;
-            println("Speedrun roster: " + name + " joined (" + (slot + 1) + " on the run)");
         }
 
         // Keep the latest name and the IW4MAdmin id, which arrives a few
