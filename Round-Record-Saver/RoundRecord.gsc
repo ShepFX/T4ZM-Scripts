@@ -78,8 +78,51 @@ AnnounceRecordsOnJoin() {
 }
 
 /**
- * NEW (Refactored): Displays the record information to the calling player.
- * This is now used by both the join announcement and the .records command.
+ * Helper function to decode "ID:Name" blocks dynamically based on online status
+ */
+ResolveRecordNames( playersArray ) {
+    if (!isDefined(playersArray) || playersArray.size == 0)
+        return "None";
+
+    current_players = getplayers();
+    resolved_string = "";
+
+    for (i = 0; i < playersArray.size; i++) {
+        block = playersArray[i];
+        split_block = StrSplit(block, ":");
+
+        if (split_block.size < 2)
+            continue;
+
+        target_id = split_block[0];
+        saved_name = split_block[1];
+        found_name = "";
+
+        // Check if the player is currently online
+        for (p = 0; p < current_players.size; p++) {
+            player = current_players[p];
+            if (isDefined(player.persistentClientId) && ("" + player.persistentClientId) == target_id) {
+                found_name = GetPlayerName(player); // Live dynamic name
+                break;
+            }
+        }
+
+        // Fallback to saved text name if they are offline
+        if (found_name == "") {
+            found_name = saved_name;
+        }
+
+        if (resolved_string == "")
+            resolved_string = found_name;
+        else
+            resolved_string += "^7, ^5" + found_name;
+    }
+
+    return resolved_string;
+}
+
+/**
+ * Displays the record information to the calling player.
  */
 ShowPlayerRecords() {
     self endon("disconnect");
@@ -94,21 +137,17 @@ ShowPlayerRecords() {
         recordData = level.highRoundsByMap[mapname][playerCount];
         round = recordData.round;
         
-        message = "";
         mode = GetGameModeString(playerCount);
 
         if (round > 0 && isDefined(recordData.players) && recordData.players.size > 0) {
-            playersString = recordData.players[0];
-            for(i = 1; i < recordData.players.size; i++){
-                playersString += "^7, ^5" + recordData.players[i];
-            }
+            playersString = ResolveRecordNames(recordData.players);
             message = "^5" + mode + "^7: Round ^5" + round + "^7 by ^5" + playersString;
         } else {
             message = "^5" + mode + "^7: No record set.";
         }
         
         self iprintln(message);
-        wait 1; // Stagger messages for readability.
+        wait 1; 
     }
 }
 
@@ -149,7 +188,7 @@ LoadHighRoundsFromFile() {
                 if (parts.size == 4) {
                     mapname = parts[0];
                     playerCount = int(parts[1]);
-                    playerNames = parts[2];
+                    playerNames = parts[2]; // This now holds the "ID:Name;ID:Name" string
                     round = int(parts[3]);
 
                     if (!isDefined(level.highRoundsByMap[mapname])) {
@@ -209,6 +248,20 @@ SaveHighRoundsToFile() {
 }
 
 /**
+ * Removes dangerous formatting elements like colons or semi-colons from raw names.
+ */
+CleanPlayerNameString( name ) {
+    cleaned = "";
+    for(i = 0; i < name.size; i++) {
+        if(name[i] != ":" && name[i] != ";" && name[i] != "|") {
+            cleaned += name[i];
+        }
+    }
+    if(cleaned == "") return "Player";
+    return cleaned;
+}
+
+/**
  * The main game loop that checks for new high scores after each round.
  */
 MonitorForNewHighRounds() {
@@ -227,15 +280,33 @@ MonitorForNewHighRounds() {
         currentRecord = level.highRoundsByMap[mapname][numPlayers].round;
 
         if (currentRound > currentRecord) {
-            playerNames = [];
+            playerDataBlocks = [];
             for (i = 0; i < numPlayers; i++) {
-                playerNames[i] = GetPlayerName(players[i]);
+                p = players[i];
+                
+                // Safety Loop: Wait up to 3 seconds (30 * 0.1s) for IW4MAdmin framework to load
+                waited = 0;
+                while(!isDefined(p.persistentClientId) && waited < 30) {
+                    wait 0.1;
+                    waited++;
+                }
+
+                p_id = "";
+                if(isDefined(p.persistentClientId))
+                    p_id = "" + p.persistentClientId;
+                else
+                    p_id = "" + p getGuid(); // Emergency Engine Fallback
+
+                p_name = CleanPlayerNameString(GetPlayerName(p));
+                
+                // Formats array entries safely into "ID:Name" structures
+                playerDataBlocks[i] = p_id + ":" + p_name;
             }
 
             level.highRoundsByMap[mapname][numPlayers].round = currentRound;
-            level.highRoundsByMap[mapname][numPlayers].players = playerNames;
+            level.highRoundsByMap[mapname][numPlayers].players = playerDataBlocks;
             
-            AnnounceNewHighRound(playerNames, currentRound, numPlayers);
+            AnnounceNewHighRound(playerDataBlocks, currentRound, numPlayers);
             SaveHighRoundsToFile();
         }
         else {
@@ -269,11 +340,7 @@ AnnounceCurrentRecord(numPlayers) {
     round = recordData.round;
     
     if (round > 0 && isDefined(players) && players.size > 0) {
-        playersString = players[0];
-        for(i = 1; i < players.size; i++){
-            playersString += "^7, ^5" + players[i];
-        }
-
+        playersString = ResolveRecordNames(players);
         mode = GetGameModeString(numPlayers);
         
         message = "^5" + mode + "^7 High Round: ^5" + round + "^7 (^5" + playersString + "^7)";
@@ -290,10 +357,7 @@ AnnounceNewHighRound(players, round, numPlayers) {
 
     playersString = "Unknown Player(s)";
     if (players.size > 0) {
-        playersString = players[0];
-        for (i = 1; i < players.size; i++) {
-            playersString += "^7, ^5" + players[i];
-        }
+        playersString = ResolveRecordNames(players);
     }
     
     mode = GetGameModeString(numPlayers);
@@ -351,7 +415,7 @@ StrSplit(input, delimiter) {
 }
 
 /**
- * NEW: Cleans chat text to remove leading spaces and other characters.
+ * Cleans chat text to remove leading spaces and other characters.
  */
 sanitizeChat(text) {
     if (!isDefined(text)) return "";
