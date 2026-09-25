@@ -1,8 +1,10 @@
 /**
  * Live round reporter (T4 / World at War Zombies).
  *
- * Writes the round currently being played to scriptdata/currentround.txt so the
- * website can show a live round, and blanks the file when the game ends so a
+ * Publishes the round currently being played two ways: to
+ * scriptdata/currentround.txt, which the website reads, and to the cuk_round
+ * dvar, which IW4MAdmin reads over rcon on its normal status poll to put
+ * "Round N" on the server cards. Both are cleared when the game ends so a
  * finished game never keeps displaying.
  *
  * File format - a single line:
@@ -25,6 +27,13 @@ main() {
 
 InitLiveRound() {
     level.liveRoundFile = "scriptdata/currentround.txt";
+
+    // The round is also published as a dvar, which is what puts "Round N" on
+    // the IW4MAdmin server cards: the round is otherwise invisible from
+    // outside the game, being a script variable rather than a dvar, absent
+    // from the server status response and never written to the game log.
+    level.liveRoundDvar = "cuk_round";
+    setdvar(level.liveRoundDvar, "0");
 
     // Seconds between refreshes when the round has not changed. The rewrite
     // keeps the file's modified time current, which is how the website tells a
@@ -64,6 +73,7 @@ MonitorLiveRound() {
                  + getDvar("mapname");
 
             WriteLiveRound(line);
+            setdvar(level.liveRoundDvar, "" + level.round_number);
         }
     }
 }
@@ -71,6 +81,7 @@ MonitorLiveRound() {
 ClearLiveRoundOn(notifyName) {
     level waittill(notifyName);
     WriteLiveRound("");
+    setdvar(level.liveRoundDvar, "0");
 }
 
 WriteLiveRound(text) {
