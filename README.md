@@ -1,6 +1,6 @@
-# CUKServers World at War (T4) zombie scripts
+# Shep World at War (T4) zombie scripts
 
-The GSC the CUKServers World at War (T4) servers actually run. Every file here was taken
+The GSC the Shep World at War (T4) servers actually run. Every file here was taken
 from a live server, so what is in this repo is what is running.
 
 Scripts install into `runtime/plutonium/storage/t4/raw/scripts/sp/` unless a folder's README says

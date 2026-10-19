@@ -1,5 +1,5 @@
 /**
- * [CUK] Map vote for T4 (World at War) zombies - same rules as the BO3 servers (cuk_mapvote.gsc):
+ * [Shep] Map vote for T4 (World at War) zombies - same rules as the BO3 servers (shep_mapvote.gsc):
  *
  *   .map        starts a vote and lists the OTHER maps in this server's rotation
  *               (sv_maprotation), e.g.  .1 Verruckt   .2 Shi No Numa

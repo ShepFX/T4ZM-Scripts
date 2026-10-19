@@ -17,7 +17,7 @@ game is running. The dvar exists because the round is otherwise invisible from
 outside the game: it is a script variable rather than a dvar, it is absent from
 the server status response, and the game log never records a round change. The port is what ties the file to the
 right server: folder names and server names do not reliably match
-(`t4sp-mcdonalds` is "[CUK] Mcdonald's [EU]"), but a port is unique.
+(`t4sp-mcdonalds` is "Shep | Mcdonald's [EU]"), but a port is unique.
 
 The round is read from `level.round_number`, which is present on stock and
 custom maps alike, unlike the round-change notify names.

@@ -1,7 +1,7 @@
 # Speedrun logger for T4 Zombies
 
 World at War counterpart of the T6 speedrun logger. Logs how long a game took to
-reach milestone rounds (10, 20, 30, 40, 50, 70, 100), so stats.cukservers.net
+reach milestone rounds (10, 20, 30, 40, 50, 70, 100), so stats.shep.rip
 can show "fastest to round N" boards per map and squad size.
 
 ## How it works

@@ -13,7 +13,7 @@
  *
  * The port is what lets the website tie this file to the right server: folder
  * names and server names do not reliably match (t4sp-mcdonalds is
- * "[CUK] Mcdonald's [EU]"), but a port is unique. The hostname is a fallback
+ * "Shep | Mcdonald's [EU]"), but a port is unique. The hostname is a fallback
  * in case net_port cannot be read.
  *
  * The round is polled rather than hooked to a round-start notify on purpose:
