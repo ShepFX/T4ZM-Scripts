@@ -12,8 +12,8 @@
  *
  *     runId    random id for this game, so the site can tell two games apart
  *     mapname  getDvar("mapname"), because one server can rotate several maps
- *     kind     always "round" on this game (T5/T6 also log "ee")
- *     target   the round reached
+ *     kind     "round", or "ee" for a song easter egg on the stock maps
+ *     target   the round reached, or the song token
  *     ms       milliseconds from the start of round 1 to the event
  *     players  squad size (see the roster rule below) - the board it goes on
  *
@@ -27,9 +27,13 @@
  * before a milestone. A new player joining from round 2 onward ends timing for
  * that game - otherwise a solo run could land on the 2P board, or a three-man
  * carry to round 28 could be logged as a 1P time. A roster member who drops
- * and rejoins is still on the roster.
+ * and rejoins is still on the roster. Anyone who left during round 1 is
+ * dropped when round 2 begins, so a player who quits early and is replaced
+ * does not turn a 4-man game into a 5P run.
  *
- * World at War maps have no main quest, so only rounds are logged.
+ * World at War maps have no main quest. The stock maps' song easter eggs are
+ * timed (Verruckt, Shi No Numa, Der Riese - Nacht has none); custom maps only
+ * log rounds.
  */
 
 main() {
@@ -54,6 +58,41 @@ InitSpeedrun() {
 
     level thread SrWaitForStart();
     level thread SrWatchRounds();
+    level thread SrWatchSong();
+}
+
+// Song easter eggs on the stock maps, timed to the moment the song unlocks.
+// Signals come from the maps' own scripts (zone fastfiles):
+//   Verruckt     toilet_useage(): 3 flushes -> level.eggs = 1
+//   Shi No Numa  toilet_useage() (the phone): dial 9-1-1 -> level.eggs = 1
+//   Der Riese    meteor_egg(): 3 teddy bears -> level.meteor_counter == 3
+// On Verruckt and Shi No Numa nothing but the song egg sets level.eggs to 1.
+SrWatchSong() {
+    level endon("end_game");
+
+    mapName = getDvar("mapname");
+    token = "";
+    if (mapName == "nazi_zombie_asylum")
+        token = "song_lullaby_of_a_dead_man";
+    else if (mapName == "nazi_zombie_sumpf")
+        token = "song_the_one";
+    else if (mapName == "nazi_zombie_factory")
+        token = "song_beauty_of_annihilation";
+    if (token == "")
+        return;
+
+    for (;;) {
+        wait 0.5;
+        if (mapName == "nazi_zombie_factory") {
+            if (isDefined(level.meteor_counter) && level.meteor_counter >= 3)
+                break;
+        } else if (isDefined(level.eggs) && level.eggs == 1) {
+            break;
+        }
+    }
+
+    if (isDefined(level.srStart) && !isDefined(level.srInvalid))
+        SrLog("ee", token);
 }
 
 SrWaitForStart() {
@@ -104,8 +143,10 @@ SrWatchRounds() {
         lastRound = level.round_number;
         SrUpdateRoster();
 
-        if (lastRound >= 2)
+        if (lastRound >= 2 && !level.srRosterLocked) {
+            SrPruneRoster();
             level.srRosterLocked = true;
+        }
 
         if (SrIsMilestone(lastRound))
             SrLog("round", "" + lastRound);
@@ -156,6 +197,21 @@ SrUpdateRoster() {
     }
 }
 
+// Round 2 has begun: keep only the roster members still in the game.
+SrPruneRoster() {
+    players = getplayers();
+    kept = [];
+    for (r = 0; r < level.srRoster.size; r++) {
+        for (i = 0; i < players.size; i++) {
+            if (isDefined(players[i]) && "" + players[i] getGuid() == level.srRoster[r].guid) {
+                kept[kept.size] = level.srRoster[r];
+                break;
+            }
+        }
+    }
+    level.srRoster = kept;
+}
+
 SrRosterIndex(guid) {
     for (i = 0; i < level.srRoster.size; i++) {
         if (level.srRoster[i].guid == guid)
@@ -184,7 +240,10 @@ SrLog(kind, target) {
 
     SrAppend(line);
 
-    iPrintLn("^7Round " + target + " in ^2" + SrFormatTime(elapsed));
+    if (kind == "ee")
+        iPrintLn("^7Song easter egg in ^2" + SrFormatTime(elapsed));
+    else
+        iPrintLn("^7Round " + target + " in ^2" + SrFormatTime(elapsed));
 }
 
 SrPlayerBlocks() {

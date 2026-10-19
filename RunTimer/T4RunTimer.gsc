@@ -1,11 +1,23 @@
 // T4 ZM - Run Timer (ported from the T6 counter's timer panel)
 //
 // Shows how long the current game has been running, which is the figure the
-// speedrun boards rank runs on. When a round ends, that round's split drops in
-// underneath for a few seconds and then tidies itself away again, leaving just
-// the run clock.
+// speedrun boards rank runs on. When a round ends, the same row shows that
+// round's split ("R12  1:23") for a few seconds, then goes back to the run
+// clock.
 //
 // Type .timer in chat to hide or show it.
+//
+// Kept to seven HUD elements per player. A player can only see a limited
+// number of script HUD elements at once (about 31 on this engine), shared
+// with the game's own perk icons; the BO1 version with 21 elements pushed
+// perk icons and the enemy counter off screen at random.
+//
+// Nothing calls settext() with text that changes: every distinct string takes
+// a configstring slot for the rest of the map, and running out disconnects
+// everyone ("G_FindConfigstringIndex: overflow"). The only strings used are
+// the fixed "RUN", "R", ":" and ":0"; every number goes through setvalue().
+// (A client-side count-up timer would be neater, but on the WaW/BO1
+// single-player engine it is set and then never ticks.)
 //
 // WaW has no enemy counter, so the panel sits on its own in the top left.
 
@@ -42,7 +54,7 @@ _rt_boot()
     level._rt_current_round = 0;
 
     level._rt_split_round = 0;
-    level._rt_split_time = "";
+    level._rt_split_ms = 0;
     level._rt_split_seconds = 6;
 
     level thread _rt_round_monitor();
@@ -74,7 +86,11 @@ _rt_round_monitor()
         // A round ended: publish its split before the next one starts. The
         // first round has nothing before it to report.
         if ( level._rt_current_round > 0 && level._rt_round_start_ms > 0 )
-            _rt_publish_split( level._rt_current_round, gettime() - level._rt_round_start_ms );
+        {
+            level._rt_split_round = level._rt_current_round;
+            level._rt_split_ms = gettime() - level._rt_round_start_ms;
+            level notify( "rt_split" );
+        }
 
         level._rt_current_round = level.round_number;
         level._rt_round_start_ms = gettime();
@@ -82,13 +98,6 @@ _rt_round_monitor()
         if ( level._rt_total_start_ms <= 0 && level.round_number > 0 )
             level._rt_total_start_ms = level._rt_round_start_ms;
     }
-}
-
-_rt_publish_split( round, elapsed_ms )
-{
-    level._rt_split_round = round;
-    level._rt_split_time = _rt_format_time( elapsed_ms );
-    level notify( "rt_split" );
 }
 
 
@@ -156,6 +165,9 @@ _rt_sanitize( text )
 
 // ════════════════════════════════════════════════════════════════════════════
 //  HUD
+//  One row: "RUN" and the clock (m:ss, the minutes carry on past 60). The
+//  clock is three elements - minutes, a separator that reads ":" or ":0" (so
+//  a single-digit second keeps its zero), and seconds.
 // ════════════════════════════════════════════════════════════════════════════
 
 _rt_build_hud()
@@ -170,53 +182,40 @@ _rt_build_hud()
         return;
 
     player.rt_ready = true;
-    player.rt_enabled = level._rt_enabled_default;
-    player.rt_split_showing = false;
 
-    // Same visual language and width as the BO1/BO2 panels.
+    player.rt_enabled = level._rt_enabled_default;
+    player.rt_split_until = 0;
+
     px = 20;
     py = 24;
     w = 80;
-    // Just the title and the run clock; the split row below brings its own
-    // background, and only while it is on screen.
-    h = 30;
+    h = 15;
 
     ar = 1.00;
     ag = 0.55;
     ab = 0.05;
 
-    player.rt_px = px;
     player.rt_py = py;
-    player.rt_time_x = px + 75;
+    player.rt_tx = px + 75;
 
-    player.rt_bg     = _rt_bar( player, px + 0, py + 0,  w, h, 0.04, 0.04, 0.07, 0.72, 5 );
-    player.rt_accent = _rt_bar( player, px + w, py + 0,  4, h, ar, ag, ab, 0.90, 6 );
-    player.rt_sep    = _rt_bar( player, px + 4, py + 13, w - 8, 1, ar, ag, ab, 0.40, 6 );
+    player.rt_bg     = _rt_bar( player, px + 0, py, w, h, 0.04, 0.04, 0.07, 0.72, 5 );
+    player.rt_accent = _rt_bar( player, px + w, py, 4, h, ar, ag, ab, 0.90, 6 );
 
     player.rt_title = _rt_text_left( player, px + 5, py + 2, 1.0, ar, ag, ab, 7 );
     player.rt_title settext( "RUN" );
 
-    player.rt_total_label = _rt_text_left( player, px + 5, py + 17, 1.0, 0.58, 0.58, 0.63, 7 );
-    player.rt_total_label settext( "TOTAL" );
+    // The split's round number, only on screen while a split is.
+    player.rt_round = _rt_text_left( player, px + 13, py + 2, 1.0, ar, ag, ab, 7 );
+    player.rt_round setvalue( 0 );
+    player.rt_round.alpha = 0;
 
-    player.rt_total_time = _rt_text_right( player, player.rt_time_x, py + 17, 1.0, 1.00, 1.00, 1.00, 7 );
-    player.rt_total_time settext( "--:--" );
-
-    // Split row: same width, directly under the panel, hidden until a round
-    // ends. Its own bar and accent so the panel appears to grow.
-    player.rt_split_bg = _rt_bar( player, px + 0, py + 30, w, 14, 0.04, 0.04, 0.07, 0.72, 5 );
-    player.rt_split_bg.alpha = 0;
-
-    player.rt_split_accent = _rt_bar( player, px + w, py + 30, 4, 14, ar, ag, ab, 0.90, 6 );
-    player.rt_split_accent.alpha = 0;
-
-    player.rt_split_label = _rt_text_left( player, px + 5, py + 31, 1.0, ar, ag, ab, 7 );
-    player.rt_split_label settext( "R0" );
-    player.rt_split_label.alpha = 0;
-
-    player.rt_split_time = _rt_text_right( player, player.rt_time_x, py + 31, 1.0, 0.90, 0.94, 1.00, 7 );
-    player.rt_split_time settext( "--:--" );
-    player.rt_split_time.alpha = 0;
+    player.rt_secs = _rt_text_right( player, player.rt_tx,      py + 2, 1.0, 1.00, 1.00, 1.00, 7 );
+    player.rt_sep  = _rt_text_right( player, player.rt_tx - 6,  py + 2, 1.0, 1.00, 1.00, 1.00, 7 );
+    player.rt_mins = _rt_text_right( player, player.rt_tx - 15, py + 2, 1.0, 1.00, 1.00, 1.00, 7 );
+    player.rt_sep settext( ":0" );
+    player.rt_padded = true;
+    player.rt_secs setvalue( 0 );
+    player.rt_mins setvalue( 0 );
 
     if ( !player.rt_enabled )
         player _rt_set_visible( 0, 0 );
@@ -225,39 +224,64 @@ _rt_build_hud()
     player thread _rt_split_loop();
 }
 
-// The clock is redrawn server side once a second. Only the one text element
-// changes, and only while the panel is actually on screen.
+// Puts a time on the clock. Digits are about 6 wide in this font: the
+// separator sits after two digits of seconds, or after one when it carries
+// the ":0" pad.
+_rt_show_time( ms )
+{
+    total = int( ms / 1000 );
+    if ( total < 0 )
+        total = 0;
+
+    m = int( total / 60 );
+    s = total - m * 60;
+
+    self.rt_mins setvalue( m );
+    self.rt_secs setvalue( s );
+
+    padded = s < 10;
+    if ( padded != self.rt_padded )
+    {
+        self.rt_padded = padded;
+        if ( padded )
+        {
+            self.rt_sep settext( ":0" );
+            self.rt_sep.x = self.rt_tx - 6;
+        }
+        else
+        {
+            self.rt_sep settext( ":" );
+            self.rt_sep.x = self.rt_tx - 12;
+        }
+    }
+}
+
+_rt_clock_color( r, g, b )
+{
+    self.rt_mins.color = ( r, g, b );
+    self.rt_sep.color = ( r, g, b );
+    self.rt_secs.color = ( r, g, b );
+}
+
+// Redraws the run clock once a second, except while a split is showing.
 _rt_tick_loop()
 {
     self endon( "disconnect" );
     level endon( "end_game" );
 
-    last = "";
-
     for ( ;; )
     {
         wait 1;
 
-        if ( !isdefined( self.rt_total_time ) )
+        if ( gettime() < self.rt_split_until )
             continue;
-        if ( !self.rt_enabled )
-            continue;
-
         if ( level._rt_total_start_ms <= 0 )
-            text = "--:--";
-        else
-            text = _rt_format_time( gettime() - level._rt_total_start_ms );
+            continue;
 
-        if ( text != last )
-        {
-            last = text;
-            self.rt_total_time settext( text );
-        }
+        self _rt_show_time( gettime() - level._rt_total_start_ms );
     }
 }
 
-// Shows the round that just finished, then tidies itself away so only the run
-// clock is left. A second round ending while it is up simply restarts it.
 _rt_split_loop()
 {
     self endon( "disconnect" );
@@ -266,60 +290,36 @@ _rt_split_loop()
     for ( ;; )
     {
         level waittill( "rt_split" );
-
-        if ( !isdefined( self.rt_split_label ) )
-            continue;
-
-        self.rt_split_label settext( "R" + level._rt_split_round );
-        self.rt_split_time settext( level._rt_split_time );
-
-        if ( !self.rt_enabled )
-            continue;
-
-        self thread _rt_split_show_then_hide();
+        self thread _rt_split_show();
     }
 }
 
-_rt_split_show_then_hide()
+// The round that just finished takes over the row ("R12  1:23", light blue),
+// then the run clock comes back. A second round ending meanwhile restarts it.
+_rt_split_show()
 {
     self endon( "disconnect" );
-    self notify( "rt_split_showing" );
-    self endon( "rt_split_showing" );
+    self notify( "rt_split_new" );
+    self endon( "rt_split_new" );
     level endon( "end_game" );
 
-    self.rt_split_showing = true;
-    self _rt_split_set_visible( 1, 0.15 );
+    self.rt_split_until = gettime() + level._rt_split_seconds * 1000;
+
+    self.rt_title settext( "R" );
+    self.rt_round setvalue( level._rt_split_round );
+    if ( self.rt_enabled )
+        self.rt_round.alpha = 1;
+    self _rt_clock_color( 0.62, 0.86, 1.00 );
+    self _rt_show_time( level._rt_split_ms );
 
     wait level._rt_split_seconds;
 
-    self _rt_split_set_visible( 0, 0.4 );
-    self.rt_split_showing = false;
-}
-
-_rt_split_set_visible( visible, fade_time )
-{
-    if ( !isdefined( self.rt_split_bg ) )
-        return;
-
-    bg_alpha = 0;
-    accent_alpha = 0;
-    text_alpha = 0;
-
-    if ( visible )
-    {
-        bg_alpha = 0.72;
-        accent_alpha = 0.90;
-        text_alpha = 1;
-    }
-
-    self.rt_split_bg fadeovertime( fade_time );
-    self.rt_split_bg.alpha = bg_alpha;
-    self.rt_split_accent fadeovertime( fade_time );
-    self.rt_split_accent.alpha = accent_alpha;
-    self.rt_split_label fadeovertime( fade_time );
-    self.rt_split_label.alpha = text_alpha;
-    self.rt_split_time fadeovertime( fade_time );
-    self.rt_split_time.alpha = text_alpha;
+    self.rt_split_until = 0;
+    self.rt_title settext( "RUN" );
+    self.rt_round.alpha = 0;
+    self _rt_clock_color( 1.00, 1.00, 1.00 );
+    if ( level._rt_total_start_ms > 0 )
+        self _rt_show_time( gettime() - level._rt_total_start_ms );
 }
 
 _rt_set_visible( visible, fade_time )
@@ -330,35 +330,34 @@ _rt_set_visible( visible, fade_time )
     alpha = 0;
     bg_alpha = 0;
     accent_alpha = 0;
-    sep_alpha = 0;
+    round_alpha = 0;
 
     if ( visible )
     {
         alpha = 1;
         bg_alpha = 0.72;
         accent_alpha = 0.90;
-        sep_alpha = 0.40;
+        if ( gettime() < self.rt_split_until )
+            round_alpha = 1;
     }
 
     self.rt_bg fadeovertime( fade_time );
     self.rt_bg.alpha = bg_alpha;
     self.rt_accent fadeovertime( fade_time );
     self.rt_accent.alpha = accent_alpha;
-    self.rt_sep fadeovertime( fade_time );
-    self.rt_sep.alpha = sep_alpha;
+    self.rt_round fadeovertime( fade_time );
+    self.rt_round.alpha = round_alpha;
 
-    self.rt_title fadeovertime( fade_time );
-    self.rt_title.alpha = alpha;
-    self.rt_total_label fadeovertime( fade_time );
-    self.rt_total_label.alpha = alpha;
-    self.rt_total_time fadeovertime( fade_time );
-    self.rt_total_time.alpha = alpha;
-
-    // The split row follows the panel, but only while it is actually up.
-    if ( !visible || !isdefined( self.rt_split_showing ) || !self.rt_split_showing )
-        self _rt_split_set_visible( 0, fade_time );
-    else
-        self _rt_split_set_visible( 1, fade_time );
+    elems = [];
+    elems[0] = self.rt_title;
+    elems[1] = self.rt_mins;
+    elems[2] = self.rt_sep;
+    elems[3] = self.rt_secs;
+    for ( i = 0; i < elems.size; i++ )
+    {
+        elems[i] fadeovertime( fade_time );
+        elems[i].alpha = alpha;
+    }
 }
 
 
@@ -421,29 +420,4 @@ _rt_bar( player, x, y, w, h, r, g, b, a, srt )
     e.color = ( r, g, b );
     e.alpha = a;
     return e;
-}
-
-// Runs pass an hour often enough that the clock has to carry hours.
-_rt_format_time( elapsed_ms )
-{
-    if ( elapsed_ms < 0 )
-        elapsed_ms = 0;
-
-    total_seconds = int( elapsed_ms / 1000 );
-    hours = int( total_seconds / 3600 );
-    minutes = int( ( total_seconds - ( hours * 3600 ) ) / 60 );
-    seconds = total_seconds - ( hours * 3600 ) - ( minutes * 60 );
-
-    second_text = "" + seconds;
-    if ( seconds < 10 )
-        second_text = "0" + seconds;
-
-    if ( hours <= 0 )
-        return minutes + ":" + second_text;
-
-    minute_text = "" + minutes;
-    if ( minutes < 10 )
-        minute_text = "0" + minutes;
-
-    return hours + ":" + minute_text + ":" + second_text;
 }

@@ -269,9 +269,18 @@ MonitorForNewHighRounds() {
     while (1) {
         level waittill("between_round_over");
 
+        currentRound = level.round_number;
+
+        // Give IW4MAdmin up to 3 seconds to attach everyone's id, then read the
+        // players again. Anyone who left during the wait is not on the record,
+        // and the round counts for the number of players still in the game.
+        waited = 0;
+        while (!AllHaveClientIds(getplayers()) && waited < 30) {
+            wait 0.1;
+            waited++;
+        }
         players = getplayers();
         numPlayers = players.size;
-        currentRound = level.round_number;
 
         if (numPlayers < 1 || numPlayers > 4) {
             continue;
@@ -280,26 +289,18 @@ MonitorForNewHighRounds() {
         currentRecord = level.highRoundsByMap[mapname][numPlayers].round;
 
         if (currentRound > currentRecord) {
+            // No waits from here to the save, so the list can't change part-way.
             playerDataBlocks = [];
             for (i = 0; i < numPlayers; i++) {
                 p = players[i];
-                
-                // Safety Loop: Wait up to 3 seconds (30 * 0.1s) for IW4MAdmin framework to load
-                waited = 0;
-                while(!isDefined(p.persistentClientId) && waited < 30) {
-                    wait 0.1;
-                    waited++;
-                }
 
                 p_id = "";
                 if(isDefined(p.persistentClientId))
                     p_id = "" + p.persistentClientId;
                 else
-                    p_id = "" + p getGuid(); // Emergency Engine Fallback
+                    p_id = "" + p getGuid(); // Fallback to engine GUID string
 
                 p_name = CleanPlayerNameString(GetPlayerName(p));
-                
-                // Formats array entries safely into "ID:Name" structures
                 playerDataBlocks[i] = p_id + ":" + p_name;
             }
 
@@ -431,4 +432,16 @@ sanitizeChat(text) {
         break;
     }
     return text;
+}
+
+/**
+ * True when IW4MAdmin has attached an id to every player in the list.
+ */
+AllHaveClientIds(players) {
+    for (i = 0; i < players.size; i++) {
+        if (isDefined(players[i]) && !isDefined(players[i].persistentClientId)) {
+            return false;
+        }
+    }
+    return true;
 }
