@@ -18,13 +18,13 @@ deployed name is the one that matters — that is the filename to copy to.
 | `Join-in-progress-script/PostRoundLock.gsc` | `T4RoundLocker.gsc` | 15 zombie servers |
 | `LiveRound/T4LiveRound.gsc` | `T4LiveRound.gsc` | 15 zombie servers |
 | `Round-Record-Saver/RoundRecord.gsc` | `T4RoundSaverNew.gsc` | 14 zombie servers (t4sp-stair is behind) |
-| `RunTimer/T4RunTimer.gsc` | `T4RunTimer.gsc` | 15 zombie servers |
+| `HUD/T4HUD.gsc` | `T4HUD.gsc` | 15 zombie servers (does nothing on KFC and McDonalds, which have their own counters) |
 | `Speedrun/T4Speedrun.gsc` | `T4Speedrun.gsc` | 15 zombie servers |
-| `Zombie Counter/_zombie_counter_hud_t4.gsc` | `-` | not deployed anywhere |
+| `Zombie Counter/_zombie_counter_hud_t4.gsc` | `-` | not deployed anywhere (superseded by `HUD/`) |
 | `CounterOverflowFix/nazi_zombie_kfc2/fix_kfc_counter.gsc` | `nazi_zombie_kfc2/fix_kfc_counter.gsc` | t4sp-kfc, private servers |
 | `CounterOverflowFix/nazi_zombie_mcdonalds/fix_mcdonalds_counter.gsc` | `nazi_zombie_mcdonalds/fix_mcdonalds_counter.gsc` | t4sp-mcdonalds, private servers |
 | `MapVote/T4MapVote.gsc` | `T4MapVote.gsc` | t4sp-campaign |
 | `PrivateRoundLock/T4PrivateRoundLock.gsc` | `T4PrivateRoundLock.gsc` | private servers |
 | `RestartVote/T4RestartVote.gsc` | `T4RestartVote.gsc` | 15 zombie servers |
 
-Last verified against the live servers on 2026-10-19.
+Last verified against the live servers on 2026-10-22.

@@ -28,12 +28,18 @@
  * that game - otherwise a solo run could land on the 2P board, or a three-man
  * carry to round 28 could be logged as a 1P time. A roster member who drops
  * and rejoins is still on the roster. Anyone who left during round 1 is
- * dropped when round 2 begins, so a player who quits early and is replaced
- * does not turn a 4-man game into a 5P run.
+ * dropped from the round boards when round 2 begins, so a player who quits
+ * early and is replaced does not turn a 4-man game into a 5P run.
+ *
+ * Easter eggs keep the round-1 leavers: round 1 can be stalled for as long as
+ * a squad likes, so a helper could do every step but the last and leave before
+ * round 2, putting a squad's egg on the solo board. An egg counts the round-1
+ * leavers who stayed at least a minute, up to the 4 a server holds; a random
+ * who joins and quits at once does not turn a solo egg into a 2P one.
  *
  * World at War maps have no main quest. The stock maps' song easter eggs are
  * timed (Verruckt, Shi No Numa, Der Riese - Nacht has none); custom maps only
- * log rounds.
+ * log rounds, and the buyable ending where the map has one.
  */
 
 main() {
@@ -59,6 +65,7 @@ InitSpeedrun() {
     level thread SrWaitForStart();
     level thread SrWatchRounds();
     level thread SrWatchSong();
+    level thread SrWatchBuyableEnding();
 }
 
 // Song easter eggs on the stock maps, timed to the moment the song unlocks.
@@ -95,6 +102,27 @@ SrWatchSong() {
         SrLog("ee", token);
 }
 
+// Buyable endings on custom maps (T4 KFC, McDonalds and Stairway to Hell, BO1
+// Stairway to Hell): a use trigger named "end_game" that deletes itself when the
+// ending is bought, then ends the game. Timed to the purchase. Maps without one
+// return at once.
+SrWatchBuyableEnding() {
+    trigs = getEntArray("end_game", "targetname");
+    if (!isDefined(trigs) || trigs.size == 0)
+        return;
+
+    for (;;) {
+        wait 0.05;
+        for (i = 0; i < trigs.size; i++) {
+            if (!isDefined(trigs[i])) {
+                if (isDefined(level.srStart) && !isDefined(level.srInvalid))
+                    SrLog("ee", "buyable_ending");
+                return;
+            }
+        }
+    }
+}
+
 SrWaitForStart() {
     level endon("end_game");
 
@@ -109,11 +137,48 @@ SrWaitForStart() {
         if (!isDefined(level.round_number) || level.round_number != 1)
             return;
 
-        level.srStart = level.round_start_time;
         level.srRoster = [];
         level.srRosterLocked = false;
+        level.srEggStay = 60000;   // ms a round-1 leaver must have stayed to count on an egg
+        level.srStart = SrFirstControl();
         return;
     }
+}
+
+// The run starts when the first player can actually play: their first move or
+// button press after spawning, so time spent loading in or in the fade from
+// black costs nothing. Standing still does not hold the clock for long: it
+// starts 3 seconds after the first spawn at the latest, and never before
+// round 1 began. The HUD clock reads level.srStart, so the two always match.
+SrFirstControl() {
+    level endon("end_game");
+
+    spawned = 0;
+    for (;;) {
+        players = getplayers();
+        for (i = 0; i < players.size; i++) {
+            p = players[i];
+            if (!isDefined(p) || !isDefined(p.sessionstate) || p.sessionstate != "playing")
+                continue;
+            if (spawned == 0)
+                spawned = getTime();
+            if (SrActing(p))
+                return getTime();
+        }
+        if (spawned > 0 && getTime() - spawned >= 3000)
+            return spawned + 3000;
+        wait 0.05;
+    }
+}
+
+// Moving along the ground (not just landing from the spawn drop) or pressing
+// fire, aim, use, grenade or melee.
+SrActing(p) {
+    v = p getVelocity();
+    if (v[0] * v[0] + v[1] * v[1] > 4)
+        return true;
+    return p attackButtonPressed() || p adsButtonPressed() || p useButtonPressed()
+        || p fragButtonPressed() || p meleeButtonPressed();
 }
 
 SrWatchRounds() {
@@ -176,7 +241,8 @@ SrUpdateRoster() {
         guid = "" + players[i] getGuid();
         slot = SrRosterIndex(guid);
 
-        if (slot < 0) {
+        // A round-1 leaver back after round 2 counts as a new face, as before.
+        if (slot < 0 || isDefined(level.srRoster[slot].gone)) {
             if (level.srRosterLocked) {
                 level.srInvalid = true;
                 iPrintLn("^3Speedrun timing ended - a new player joined after round 1");
@@ -185,7 +251,10 @@ SrUpdateRoster() {
             slot = level.srRoster.size;
             level.srRoster[slot] = spawnStruct();
             level.srRoster[slot].guid = guid;
+            level.srRoster[slot].since = getTime();
         }
+
+        level.srRoster[slot].seen = getTime();
 
         // Keep the latest name and the IW4MAdmin id, which arrives a few
         // seconds after connecting, so a player who leaves is still credited.
@@ -197,19 +266,33 @@ SrUpdateRoster() {
     }
 }
 
-// Round 2 has begun: keep only the roster members still in the game.
+// Round 2 has begun: mark the roster members no longer in the game. They
+// leave the round boards' squad but still count towards an easter egg.
 SrPruneRoster() {
     players = getplayers();
-    kept = [];
     for (r = 0; r < level.srRoster.size; r++) {
+        here = false;
         for (i = 0; i < players.size; i++) {
             if (isDefined(players[i]) && "" + players[i] getGuid() == level.srRoster[r].guid) {
-                kept[kept.size] = level.srRoster[r];
+                here = true;
                 break;
             }
         }
+        if (!here)
+            level.srRoster[r].gone = true;
     }
-    level.srRoster = kept;
+}
+
+// Who a line is credited to: the round boards skip the round-1 leavers, an
+// easter egg keeps the ones who stayed long enough to have helped.
+SrSquad(kind) {
+    squad = [];
+    for (i = 0; i < level.srRoster.size; i++) {
+        m = level.srRoster[i];
+        if (!isDefined(m.gone) || (kind == "ee" && m.seen - m.since >= level.srEggStay))
+            squad[squad.size] = m;
+    }
+    return squad;
 }
 
 SrRosterIndex(guid) {
@@ -231,25 +314,36 @@ SrIsMilestone(rnd) {
 SrLog(kind, target) {
     elapsed = getTime() - level.srStart;
     SrUpdateRoster();
-    if (isDefined(level.srInvalid) || level.srRoster.size == 0)
+    if (isDefined(level.srInvalid))
         return;
 
+    squad = SrSquad(kind);
+    if (squad.size == 0)
+        return;
+
+    // A swap in round 1 can leave 5 names on an egg; it still goes on the 4P board.
+    count = squad.size;
+    if (count > 4)
+        count = 4;
+
     line = level.srRunId + "|" + level.srMapToken + "|" + kind + "|" + target + "|"
-         + elapsed + "|" + level.srRoster.size + "|" + SrPlayerBlocks() + "|"
+         + elapsed + "|" + count + "|" + SrPlayerBlocks(squad) + "|"
          + getDvar("net_port");
 
     SrAppend(line);
 
-    if (kind == "ee")
+    if (target == "buyable_ending")
+        iPrintLn("^7Buyable ending in ^2" + SrFormatTime(elapsed));
+    else if (kind == "ee")
         iPrintLn("^7Song easter egg in ^2" + SrFormatTime(elapsed));
     else
         iPrintLn("^7Round " + target + " in ^2" + SrFormatTime(elapsed));
 }
 
-SrPlayerBlocks() {
+SrPlayerBlocks(squad) {
     blocks = "";
-    for (i = 0; i < level.srRoster.size; i++) {
-        block = level.srRoster[i].id + ":" + level.srRoster[i].name;
+    for (i = 0; i < squad.size; i++) {
+        block = squad[i].id + ":" + squad[i].name;
 
         if (blocks == "")
             blocks = block;
