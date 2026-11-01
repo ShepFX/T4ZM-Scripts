@@ -32,6 +32,18 @@
  * or, on maps that send neither (Verruckt), from the stock perks a player gains,
  * and Pack-a-Punch is a new "_upgraded" weapon in the player's hands.
  *
+ * Box spins and downs also go one line each to scriptdata/gameevents.txt (31 Oct 2026):
+ *     <runId>|<mapname>|<round>|<port>|<id>|<name>|box|<weapon or "teddy">
+ *     <runId>|<mapname>|<round>|<port>|<id>|<name>|down|<x>,<y>,<z>
+ * A box line is the weapon the spin offered, taken or not; "teddy" moved the box.
+ * Floor plans for the heatmaps (1 Nov 2026):
+ *     ...|0|-|grid|<cx>,<cy>,<cz>,<n>;...   time spent per 64x64x128-unit cell, every 5 minutes
+ *     ...|0|-|mark|<type>:<name>:<x>,<y>,<z>   perks, PaP, box spots and wall buys, once per game
+ * Cells are offset by 65536 so they are never negative: cx = int((x + 65536) / 64).
+ * Live radar (1 Nov 2026), the four stock maps only: every second, one line per player into the
+ * game log in the format IW4MAdmin's Live Radar reads, the team field holding up, down or dead:
+ *     LiveRadar;<guid hex>;<origin>;<angles>;<state>;0;0;0;none;<health>;<alive>;0
+ *
  * A session with no kills that lasted under 30 seconds is not written, so
  * someone connecting and leaving straight away adds nothing.
  *
@@ -77,17 +89,25 @@ GsHarryBoxDecide(player) {
         player.gsSession.box++;
 
     disableDetourOnce(level.gsHarryBoxDecide);
-    return self [[level.gsHarryBoxDecide]](player);
+    weapon = self [[level.gsHarryBoxDecide]](player);
+    if (isDefined(player) && isPlayer(player) && isDefined(weapon))
+        GsEvent(player, "box", "" + weapon);
+    return weapon;
 }
 
 InitGameStats() {
     level.gsFile = "scriptdata/gamestats.txt";
+    level.gsEventFile = "scriptdata/gameevents.txt";
     level.gsRunId = randomInt(1000000) + "-" + getTime();
     level.gsMapToken = getDvar("mapname");
     level.gsSessions = [];
 
     level thread GsWatchPlayers();
     level thread GsWatchEnd();
+    level thread GsFloorSample();
+    level thread GsFloorFlush();
+    level thread GsLogMarks();
+    level thread GsRadar();
 }
 
 // New player entities get their own tracking thread. Polled rather than
@@ -127,6 +147,7 @@ GsTrackPlayer() {
     self thread GsWatchPerks(session, "machine_used");
     self thread GsWatchPerksHeld(session);
     self thread GsWatchPap(session);
+    self thread GsWatchDowns();
 
     // Keep a copy of the numbers, so a player who drops is still logged with
     // what they had - their entity is gone by the time "disconnect" arrives.
@@ -230,6 +251,7 @@ GsWatchPap(session) {
 GsChestSpawn(chest, player, fireSale) {
     if (isDefined(player) && isPlayer(player) && isDefined(player.gsSession))
         player.gsSession.box++;
+    self thread GsLogSpin(player);
 
     disableDetourOnce(level.gsChestSpawn);
     if (isDefined(fireSale))
@@ -241,9 +263,181 @@ GsChestSpawn(chest, player, fireSale) {
 GsChestSpawnSumpf(chest, player) {
     if (isDefined(player) && isPlayer(player) && isDefined(player.gsSession))
         player.gsSession.box++;
+    self thread GsLogSpin(player);
 
     disableDetourOnce(level.gsChestSpawnSumpf);
     self [[level.gsChestSpawnSumpf]](chest, player);
+}
+
+// The spin ends with "randomization_done" on the weapon spawn origin (self),
+// which then holds the weapon in weapon_string. On a teddy bear WaW keeps a
+// weapon name there but sets the "moving_chest_now" flag first.
+GsLogSpin(player) {
+    self waittill("randomization_done");
+    if (!isDefined(player) || !isPlayer(player))
+        return;
+    weapon = "teddy";
+    if (!(isDefined(level.flag) && isDefined(level.flag["moving_chest_now"]) && level.flag["moving_chest_now"])
+        && isDefined(self.weapon_string))
+        weapon = self.weapon_string;
+    GsEvent(player, "box", weapon);
+}
+
+// player.downs counts every down; where the player was when it went up.
+GsWatchDowns() {
+    self endon("disconnect");
+    last = GsNum(self.downs);
+    for (;;) {
+        wait 0.2;
+        now = GsNum(self.downs);
+        if (now > last)
+            GsEvent(self, "down", int(self.origin[0]) + "," + int(self.origin[1]) + "," + int(self.origin[2]));
+        last = now;
+    }
+}
+
+// Every 2 s, one count for the cell each playing player stands in.
+GsFloorSample() {
+    level.gsFloor = [];
+    for (;;) {
+        wait 2;
+        if (GsGameOver())
+            return;
+        players = getplayers();
+        for (i = 0; i < players.size; i++) {
+            p = players[i];
+            if (!isDefined(p) || !isDefined(p.sessionstate) || p.sessionstate != "playing")
+                continue;
+            key = int((p.origin[0] + 65536) / 64) + "," + int((p.origin[1] + 65536) / 64) + "," + int((p.origin[2] + 65536) / 128);
+            if (!isDefined(level.gsFloor[key]))
+                level.gsFloor[key] = 0;
+            level.gsFloor[key] = level.gsFloor[key] + 1;
+        }
+    }
+}
+
+// Live radar lines, stock maps only. The guid goes out in hex because the radar plugin parses it that way.
+GsRadar() {
+    map = getDvar("mapname");
+    if (map != "nazi_zombie_prototype" && map != "nazi_zombie_asylum" && map != "nazi_zombie_sumpf" && map != "nazi_zombie_factory")
+        return;
+    for (;;) {
+        wait 1;
+        if (GsGameOver())
+            return;
+        players = getplayers();
+        for (i = 0; i < players.size; i++) {
+            p = players[i];
+            if (!isDefined(p))
+                continue;
+            alive = isDefined(p.sessionstate) && p.sessionstate == "playing";
+            state = "up";
+            if (!alive)
+                state = "dead";
+            else if (isDefined(p.revivetrigger))
+                state = "down";
+            logPrint("LiveRadar;" + GsHex(p getGuid()) + ";" + p.origin + ";" + p getPlayerAngles() + ";" + state
+                + ";0;0;0;none;" + GsNum(p.health) + ";" + GsNum(alive) + ";0\n");
+        }
+    }
+}
+
+GsHex(value) {
+    n = int(value);
+    if (n <= 0)
+        return "0";
+    digits = "0123456789abcdef";
+    out = "";
+    for (i = 0; i < 16 && n > 0; i++) {
+        out = digits[n % 16] + out;
+        n = int(n / 16);
+    }
+    return out;
+}
+
+// The counts go out every 5 minutes (and at game over), 40 cells a line.
+GsFloorFlush() {
+    for (;;) {
+        for (t = 0; t < 300 && !GsGameOver(); t++)
+            wait 1;
+        cells = level.gsFloor;
+        level.gsFloor = [];
+        if (isDefined(cells)) {
+            keys = getArrayKeys(cells);
+            data = "";
+            n = 0;
+            for (i = 0; i < keys.size; i++) {
+                if (n > 0)
+                    data = data + ";";
+                data = data + keys[i] + "," + cells[keys[i]];
+                n++;
+                if (n == 40 || i == keys.size - 1) {
+                    GsLevelLine("grid", data);
+                    data = "";
+                    n = 0;
+                }
+            }
+        }
+        if (GsGameOver())
+            return;
+    }
+}
+
+// Where the perk machines, Pack-a-Punch, box spots and wall buys are.
+GsLogMarks() {
+    wait 10;
+    vending = getEntArray("zombie_vending", "targetname");
+    for (i = 0; i < vending.size; i++) {
+        if (isDefined(vending[i].script_noteworthy))
+            GsMark("perk", vending[i].script_noteworthy, vending[i].origin);
+    }
+    pap = getEntArray("zombie_vending_upgrade", "targetname");
+    for (i = 0; i < pap.size; i++)
+        GsMark("pap", "specialty_weapupgrade", pap[i].origin);
+    for (t = 0; t < 1200 && !isDefined(level.chests); t++)
+        wait 1;
+    if (isDefined(level.chests)) {
+        for (i = 0; i < level.chests.size; i++) {
+            if (isDefined(level.chests[i]))
+                GsMark("box", "box", level.chests[i].origin);
+        }
+    }
+    wallbuys = getEntArray("weapon_upgrade", "targetname");
+    for (i = 0; i < wallbuys.size; i++) {
+        if (isDefined(wallbuys[i].zombie_weapon_upgrade))
+            GsMark("wall", wallbuys[i].zombie_weapon_upgrade, wallbuys[i].origin);
+    }
+}
+
+GsMark(type, name, origin) {
+    GsLevelLine("mark", type + ":" + name + ":" + int(origin[0]) + "," + int(origin[1]) + "," + int(origin[2]));
+}
+
+GsLevelLine(type, data) {
+    line = level.gsRunId + "|" + level.gsMapToken + "|" + GsRound() + "|" + getDvar("net_port") + "|0|-|" + type + "|" + data;
+    file = fs_fopen(level.gsEventFile, "append");
+    if (isDefined(file) && file != 0) {
+        fs_writeline(file, line);
+        fs_fclose(file);
+    }
+}
+
+GsEvent(player, type, data) {
+    if (GsGameOver() || !isDefined(level.gsEventFile))
+        return;
+    id = "" + player getGuid();
+    if (isDefined(player.persistentClientId))
+        id = "" + player.persistentClientId;
+    name = "";
+    if (isDefined(player.name))
+        name = GsCleanName(player.name);
+    line = level.gsRunId + "|" + level.gsMapToken + "|" + GsRound() + "|" + getDvar("net_port") + "|"
+         + id + "|" + name + "|" + type + "|" + data;
+    file = fs_fopen(level.gsEventFile, "append");
+    if (isDefined(file) && file != 0) {
+        fs_writeline(file, line);
+        fs_fclose(file);
+    }
 }
 
 // Runs in place of the map's powerup_grab, watching who walks into the drop.
